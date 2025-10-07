@@ -1,0 +1,41 @@
+    def new_mobility_command(self):
+        empty_cells = []
+
+        for i in range(self.map.shape[0]):
+            if self.map[i, 0] == 0:
+                empty_cells.append(i)                    
+        logging.info(f"Node {self.provider.get_id()}. There are {len(empty_cells)} empty cells")
+
+        if empty_cells:
+            new_target = float(np.random.choice(empty_cells))
+            logging.info(f"Going to cell {new_target}")
+            x = (new_target // 10) * 10 - len(self.map)/2
+            y = (new_target % 10) * 10 - len(self.map)/2
+            self.goto_command = np.array([x, y, 10])
+        else:
+            #logging.warning(f"No empty cells found. Going to base")
+            self.goto_command = (0,0, 0)
+            command = GotoCoordsMobilityCommand(*self.goto_command)
+            self.provider.send_mobility_command(command)
+
+
+"""            if np.linalg.norm(current_pos_array - self.goto_command) < 1:
+                #logging.info("Arrived at destination, choosing a new one...")
+                empty_cells = []
+                for i in range(self.map.shape[0]):
+                    if self.map[i, 0] == 0:
+                        empty_cells.append(i)
+                    
+                logging.info(f"Node {self.provider.get_id()}. There are {len(empty_cells)} empty cells")
+
+                if empty_cells:
+                    new_target = float(np.random.choice(empty_cells))
+                    logging.info(f"Going to cell {new_target}")
+                    x = (new_target // 10) * 10 - len(self.map)/2
+                    y = (new_target % 10) * 10 - len(self.map)/2
+                    self.goto_command = np.array([x, y, 10])
+                else:
+                    #logging.warning(f"No empty cells found. Going to base")
+                    self.goto_command = (0,0, 0)
+                command = GotoCoordsMobilityCommand(*self.goto_command)
+                self.provider.send_mobility_command(command)"""
