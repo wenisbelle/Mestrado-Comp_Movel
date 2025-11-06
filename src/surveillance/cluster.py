@@ -95,7 +95,7 @@ class ClusterDetector:
 
         random_sample = random.sample(fitness_scores, 3)
         best_in_sample = max(random_sample, key=lambda x: x[0])
-        print(f"Chosen cluster with fitness: {best_in_sample[0]}")
+        #print(f"Chosen cluster with fitness: {best_in_sample[0]}")
         # Return the coordinates
         return best_in_sample[1]
     
@@ -103,11 +103,10 @@ class ClusterDetector:
         if not fitness_scores:
             return None
         
-        if len(fitness_scores) < 3:
-            best_cluster = max(fitness_scores, key=lambda x: x[0])
-            return best_cluster[1]
+        if len(fitness_scores) == 2:
+            return [fitness_scores[0][1], fitness_scores[1][1]]        
 
         random_sample = random.sample(fitness_scores, 3)
         top_two = heapq.nlargest(2, random_sample, key=lambda x: x[0])
+        print(f"Chosen clusters in positions: {[item[1] for item in top_two]}")
         return [item[1] for item in top_two]
-        

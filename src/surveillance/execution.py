@@ -13,7 +13,7 @@ def main():
     # Configuring simulation
     config = SimulationConfiguration(
         duration=300, 
-        real_time=False
+        real_time=False,
     )
     builder = SimulationBuilder(config)
 
@@ -33,6 +33,7 @@ def main():
     # Instantiating 4 UAVs at (0,0,0)
     builder.add_node(Drone, (0, 0, 0))
     builder.add_node(Drone, (0, 0, 0))
+    #builder.add_node(Drone, (0, 0, 0))
     #builder.add_node(Drone, (0, 0, 0))
 
     # Building & starting

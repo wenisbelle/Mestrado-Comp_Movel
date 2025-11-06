@@ -15,62 +15,72 @@ class MapVisualizer:
             map_size: The total number of cells in the map (e.g., 100 for a 10x10 grid).
         """
         try:
-            plt.ion()  # Turn on interactive mode for non-blocking plots
-            self.fig, self.axes = plt.subplots(1, num_drones, figsize=(5 * num_drones, 5.5))
+            plt.ion()
+            self.fig, self.axes = plt.subplots(2, num_drones, figsize=(5 * num_drones, 10))
             
-            # Ensure self.axes is always a list for consistent indexing
+            # CRITICAL: This ensures self.axes is always a 2D array for consistent indexing
             if num_drones == 1:
-                self.axes = [self.axes]
+                self.axes = self.axes.reshape(2, 1)
 
-            # Calculate the shape of the grid (e.g., 10x10)
             self.map_shape = (int(np.sqrt(map_size)), int(np.sqrt(map_size)))
+            self.threshold = 0.5
+
+            # CRITICAL: self.images must be a list of lists to hold plots for each row
+            self.images = [[], []] 
             
-            self.images = []
             for i in range(num_drones):
-                # Initialize with a blank map
                 initial_map_data = np.zeros(self.map_shape)
-                im = self.axes[i].imshow(initial_map_data, cmap='gray_r', vmin=0, vmax=1, origin='lower')
-                
-                # Set titles and remove axis ticks for a cleaner look
-                self.axes[i].set_title(f"Drone {i + 1}'s Map (Initializing...)")
-                self.axes[i].set_xticks([])
-                self.axes[i].set_yticks([])
-                self.images.append(im)
+
+                # --- Setup Top Row (Original Map) ---
+                ax_top = self.axes[0, i]
+                im_top = ax_top.imshow(initial_map_data, cmap='YlGn', vmin=0, vmax=1, origin='lower')
+                ax_top.set_title(f"Drone {i + 100} Map")
+                ax_top.set_xticks([])
+                ax_top.set_yticks([])
+                self.images[0].append(im_top)
+
+                # --- Setup Bottom Row (Masked Map) ---
+                ax_bottom = self.axes[1, i]
+                im_bottom = ax_bottom.imshow(initial_map_data, cmap='gray_r', vmin=0, vmax=1, origin='lower')
+                ax_bottom.set_title(f"Drone {i + 100} Mask")
+                ax_bottom.set_xticks([])
+                ax_bottom.set_yticks([])
+                self.images[1].append(im_bottom)
                 
             self.fig.tight_layout(pad=2.0)
             plt.show()
         except Exception as e:
             logging.error(f"Error initializing visualizer: {e}")
 
+    def apply_mask(self, grid: np.ndarray) -> np.ndarray:
+        """Applies a threshold mask to the grid."""
+        return (grid >= self.threshold).astype(int)
 
     def update_map(self, drone_id: int, map_data: np.ndarray):
         """
         Updates the map visualization for a specific drone.
-
-        Args:
-            drone_id: The unique ID of the drone from the simulator.
-            map_data: The drone's current map data (a NumPy array).
         """
         try:
-            # The simulation assigns IDs starting from 100 for the drones.
-            # We map this to our plot indices (0, 1, 2).
+            # Convert drone ID (100, 101, ...) to plot column index (0, 1, ...)
             plot_index = drone_id - 100 
             
-            if 0 <= plot_index < len(self.images):
-                # The map is stored as (100, 2), but we only need the first column
-                # (the 'seen' status) and reshape it into a 10x10 grid for display.
+            if 0 <= plot_index < len(self.images[0]):
                 map_view = map_data[:, 0].reshape(self.map_shape)
+                masked_view = self.apply_mask(map_view)
+
+                # CRITICAL: Use correct 2D indexing: [row][column]
+                # Update Top Plot (Original)
+                self.images[0][plot_index].set_data(map_view)
+                discovered_cells = np.sum(map_view > self.threshold)
+                self.axes[0, plot_index].set_title(f"Drone {drone_id} Map ({discovered_cells:.0f}/100)")
                 
-                # Update the image data and title
-                self.images[plot_index].set_data(map_view)
-                discovered_cells = np.sum(map_view)
-                self.axes[plot_index].set_title(f"Drone {drone_id}'s Map ({discovered_cells:.0f} / 100)")
-                
-                # Redraw the canvas to show the changes
+                # Update Bottom Plot (Masked)
+                self.images[1][plot_index].set_data(masked_view)
+                self.axes[1, plot_index].set_title(f"Drone {drone_id} Mask")
+
                 self.fig.canvas.draw()
                 self.fig.canvas.flush_events()
         except Exception as e:
-            # Log errors without crashing the simulation
             logging.warning(f"Could not update map for drone {drone_id}: {e}")
         
     def close(self):

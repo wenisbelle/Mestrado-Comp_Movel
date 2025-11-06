@@ -75,7 +75,7 @@ class Drone(IProtocol):
     def initialize(self) -> None:
         self._log = logging.getLogger()
         self.drone_position = None
-        self.goto_command = (0.0, 0.0, 10.0)
+        self.goto_command = np.zeros(3)
         self.MAP_WIDTH = 10
         self.MAP_HEIGHT = 10
         self.map = np.zeros((self.MAP_HEIGHT, self.MAP_WIDTH, 2))
@@ -83,17 +83,17 @@ class Drone(IProtocol):
         self.status = DroneStatus.MAPPING
         self.DECAY_RATE = 0.05
         self.VANISHING_UPDATE_TIME = 10.0
-        self.cluster_detector = ClusterDetector(threshold=0.5, min_size=3)
-        self.last_drone_interaction_time = np.zeros(2)  # Assuming 2 drones, starting with ID 100
+        self.cluster_detector = ClusterDetector(threshold=0.5, min_size=1)
+        self.last_drone_interaction_time = np.zeros(2)  # Assuming 4 drones, starting with ID 100
 
         if Drone.visualizer is None:
             # We have 3 drones in the simulation.
             # I have to think a better way to do this.
-            Drone.visualizer = MapVisualizer(num_drones=3)
+            Drone.visualizer = MapVisualizer(num_drones=2, map_size=100)
 
         self.visualizer.update_map(self.provider.get_id(), self.map.reshape(-1, 2))
 
-        self.goto_command = np.array([random.uniform(-50, 50), random.uniform(-50, 50), 10])
+        self.goto_command = np.array([random.uniform(-5*self.MAP_WIDTH, 5*self.MAP_WIDTH), random.uniform(-5*self.MAP_HEIGHT, 5*self.MAP_HEIGHT), 10])
         command = GotoCoordsMobilityCommand(*self.goto_command)
         self.provider.send_mobility_command(command)
         
@@ -129,8 +129,9 @@ class Drone(IProtocol):
     def internal_mobility_command(self):
         clusters = self.cluster_detector.find_zero_clusters(self.map[:, :, 0])                   
         logging.info(f"Node {self.provider.get_id()}. Found {len(clusters)} clusters")
+        map_center_offset = (self.MAP_WIDTH * 10) / 2
 
-        if len(clusters) >= 3:
+        if len(clusters) > 1:
             cluster_fitness_scores = self.cluster_detector.cluster_fitness(
                 clusters, 
                 self.drone_position, 
@@ -144,25 +145,25 @@ class Drone(IProtocol):
             target_row, target_col = target_coords
 
             self._log.info(f"Arrived at destination. Going to cell {target_row}, {target_col}")
-            map_center_offset = (self.MAP_WIDTH * 10) / 2
+            
             x_goto = target_row * 10 - map_center_offset
             y_goto = target_col * 10 - map_center_offset            
             self.goto_command = np.array([x_goto, y_goto, 10])
         
-        elif len(clusters) < 3 and len(clusters) > 0:
+        elif len(clusters) == 1:
             minimum_cells_coords = self.check_minimum_cells()                 
-            logging.info(f"Node {self.provider.get_id()}. There are {len(minimum_cells_coords)} minimum cells")
+            #logging.info(f"Node {self.provider.get_id()}. There are {len(minimum_cells_coords)} minimum cells")
 
             if minimum_cells_coords:
                 target_row, target_col = random.choice(minimum_cells_coords)
                 logging.info(f"Arrived at destination. Going to cell {target_row}, {target_col}")
-                x = (target_row) * 10 - self.MAP_WIDTH * 10/2
-                y = (target_col) * 10 - self.MAP_HEIGHT * 10/2
+                x = (target_row) * 10 - map_center_offset
+                y = (target_col) * 10 - map_center_offset
                 self.goto_command = np.array([x, y, 10])
 
         else:
             #logging.warning(f"No empty cells found. Going to base")
-            self.goto_command = (0,0, 0)
+            self.goto_command = np.zeros(3)
         
         command = GotoCoordsMobilityCommand(*self.goto_command)      
         self.provider.send_mobility_command(command)
@@ -170,8 +171,9 @@ class Drone(IProtocol):
     def external_mobility_command(self):
         clusters = self.cluster_detector.find_zero_clusters(self.map[:, :, 0])                   
         logging.info(f"Node {self.provider.get_id()}. Found {len(clusters)} clusters")
-
-        if len(clusters) >= 3:
+        map_center_offset = (self.MAP_WIDTH * 10) / 2
+        
+        if len(clusters) >= 2:
             cluster_fitness_scores = self.cluster_detector.cluster_fitness(
                 clusters, 
                 self.drone_position, 
@@ -184,8 +186,7 @@ class Drone(IProtocol):
             target_coords = self.cluster_detector.choose_two_clusters(cluster_fitness_scores)
             target_row_1, target_col_1 = target_coords[0]
             target_row_2, target_col_2 = target_coords[1]
-
-            map_center_offset = (self.MAP_WIDTH * 10) / 2
+            
             x_goto = target_row_1 * 10 - map_center_offset
             y_goto = target_col_1 * 10 - map_center_offset            
             self.goto_command = np.array([x_goto, y_goto, 10])
@@ -194,35 +195,35 @@ class Drone(IProtocol):
             y_send_command = target_col_2 * 10 - map_center_offset
             send_command = np.array([x_send_command, y_send_command, 10])
         
-        elif len(clusters) < 3 and len(clusters) > 0:
+        elif len(clusters) < 2 and len(clusters) > 0:
             minimum_cells_coords = self.check_minimum_cells()                 
             logging.info(f"Node {self.provider.get_id()}. There are {len(minimum_cells_coords)} minimum cells")
 
-            if len(minimum_cells_coords)>=2:
+            if len(minimum_cells_coords) >= 2:
                 chosen_pairs = random.sample(minimum_cells_coords, 2)
                 target_row_1, target_col_1 = chosen_pairs[0]
                 target_row_2, target_col_2 = chosen_pairs[1]
                 
-                x_goto = (target_row_1) * 10 - self.MAP_WIDTH * 10/2
-                y_goto = (target_col_1) * 10 - self.MAP_HEIGHT * 10/2
+                x_goto = (target_row_1) * 10 - map_center_offset
+                y_goto = (target_col_1) * 10 - map_center_offset
                 self.goto_command = np.array([x_goto, y_goto, 10])
                 
-                x_send_command = (target_row_2) * 10 - self.MAP_WIDTH * 10/2
-                y_send_command = (target_col_2) * 10 - self.MAP_HEIGHT
+                x_send_command = (target_row_2) * 10 - map_center_offset
+                y_send_command = (target_col_2) * 10 - map_center_offset
                 send_command = np.array([x_send_command, y_send_command, 10])
 
             elif len(minimum_cells_coords)==1:
                 target_row, target_col = minimum_cells_coords[0]
-                x = (target_row) * 10 - self.MAP_WIDTH * 10/2
-                y = (target_col) * 10 - self.MAP_HEIGHT * 10/2
+                x = (target_row) * 10 - map_center_offset
+                y = (target_col) * 10 - map_center_offset
                 self.goto_command = np.array([x, y, 10])
                 self._log.info(f"Only one minimum cell found. Sending a random command to the other UAV.")
                 send_command = np.array([random.uniform(-50, 50), random.uniform(-50, 50), 10])
 
         else:
             #logging.warning(f"No empty cells found. Going to base")
-            self.goto_command = (0,0, 0)
-            send_command = (0,0,0)
+            self.goto_command = np.zeros(3)
+            send_command = np.zeros(3)
 
         return send_command
         
@@ -326,8 +327,9 @@ class Drone(IProtocol):
                 if self.provider.get_id() >= data['sender']:
                     self._log.info(f"Node {self.provider.get_id()} is calculating the new destinations")
                     send_command = self.external_mobility_command()
-                    
-                    command = GotoCoordsMobilityCommand(*self.goto_command)      
+
+                    self._log.info(f"After updating map going to {self.goto_command} and sending {send_command} to drone {data['sender']}")
+                    command = GotoCoordsMobilityCommand(*self.goto_command)
                     self.provider.send_mobility_command(command)
 
                     self.send_goto_command(send_command, data['sender'])
