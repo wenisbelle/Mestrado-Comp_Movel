@@ -2,7 +2,6 @@ import math
 from dataclasses import dataclass
 from typing import Optional, TypedDict, Tuple, List
 
-
 from gradysim.protocol.interface import IProtocol
 from gradysim.protocol.position import Position
 from gradysim.simulator.extension.extension import Extension
@@ -10,7 +9,8 @@ from gradysim.simulator.handler.mobility import MobilityHandler
 
 class DetectedNode(TypedDict):
     position: Position
-    type: str
+    type: int
+    is_threat: Optional[int]
 
 @dataclass
 class CameraConfiguration:
@@ -110,11 +110,19 @@ class CameraHardware(Extension):
                 if angle > self._camera_theta:
                     continue
                         
+            # 1. Obtenha a instância real do protocolo de dentro do encapsulador
+            protocol_instance = node.protocol_encapsulator.protocol
+
+            # 2. Use getattr para acessar 'is_threat' com segurança.
+            # Se o atributo não existir, 'threat_value' será None.
+            threat_value = getattr(protocol_instance, 'is_threat', None)
+
             detected_nodes.append({
                 'position': other_node_position,
-                'type': node.id
+                'type': node.id, 
+                'is_threat': threat_value  
             })
-
+            
         return detected_nodes
 
     def change_facing(self, facing_elevation: float, facing_rotation: float):

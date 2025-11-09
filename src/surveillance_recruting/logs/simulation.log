@@ -1,0 +1,39 @@
+[--------- Simulation started ---------]
+Drone 0 uncertainty rate 0.05, vanishing time 10.0, map threshold 0.5
+Drone 1 uncertainty rate 0.05, vanishing time 10.0, map threshold 0.5
+server listening on 127.0.0.1:5678
+connection rejected (426 Upgrade Required)
+opening handshake failed
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/dist-packages/websockets/asyncio/server.py", line 356, in conn_handler
+    await connection.handshake(
+  File "/usr/local/lib/python3.10/dist-packages/websockets/asyncio/server.py", line 207, in handshake
+    raise self.protocol.handshake_exc
+  File "/usr/local/lib/python3.10/dist-packages/websockets/server.py", line 138, in accept
+    ) = self.process_request(request)
+  File "/usr/local/lib/python3.10/dist-packages/websockets/server.py", line 233, in process_request
+    raise InvalidUpgrade(
+websockets.exceptions.InvalidUpgrade: invalid Connection header: keep-alive
+connection open
+Point of Interest 91 threat level set to 2
+Point of Interest 99 threat level set to 1
+Point of Interest 78 threat level set to 3
+Threats found [Threat(level=1, position_id=99, timestamp=21.5)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.0)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.5)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.5), Threat(level=2, position_id=91, timestamp=25.5)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.5), Threat(level=2, position_id=91, timestamp=26.0)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.5), Threat(level=2, position_id=91, timestamp=26.5)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.5), Threat(level=2, position_id=91, timestamp=27.0)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.5), Threat(level=2, position_id=91, timestamp=27.5)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.5), Threat(level=2, position_id=91, timestamp=28.0)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.5), Threat(level=2, position_id=91, timestamp=28.5)]
+Threats found [Threat(level=3, position_id=78, timestamp=29.0)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.5), Threat(level=2, position_id=91, timestamp=29.0)]
+Threats found [Threat(level=3, position_id=78, timestamp=29.5)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.5), Threat(level=2, position_id=91, timestamp=29.5)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.5), Threat(level=2, position_id=91, timestamp=30.0)]
+Threats found [Threat(level=3, position_id=78, timestamp=30.5)]
+Threats found [Threat(level=1, position_id=99, timestamp=22.5), Threat(level=2, position_id=91, timestamp=30.5)]
+server closing
+server closed
