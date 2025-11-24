@@ -13,7 +13,7 @@ def run_simulation_once():
     # Configuring simulation
     config = SimulationConfiguration(
         duration=250, 
-        real_time=True,
+        real_time=False,
     )
     builder = SimulationBuilder(config)
 

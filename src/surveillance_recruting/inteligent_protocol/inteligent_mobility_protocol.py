@@ -26,19 +26,25 @@ class Threat:
 class DroneStatus(enum.Enum):
     MAPPING = 0
     RECRUITING = 1
-    ENGAGING = 2
+    RECRUITED = 2
+    ENGAGING = 3
+    CREATING_FORMATION = 4
 
 class MessageType(enum.Enum):
-    HEARTBEAT_MESSAGE = 0
+    MAPPING_HEARTBEAT_MESSAGE = 0
     SHARE_MAP_MESSAGE = 1
     SHARE_GOTO_POSITION_MESSAGE = 2
-    RECRUITING_MESSAGE = 3
+    RECRUITING_HEATBEAT_MESSAGE = 3
 
-class HeartBeatMessage(TypedDict):
+class MappingHeartBeatMessage(TypedDict):
     message_type: int
-    status: int
     sender: int
 
+class RecruitingHeartBeatMessage(TypedDict):
+    message_type: int
+    sender: int
+    sender_position: list
+    
 class ShareMapMessage(TypedDict):
     message_type: int 
     map: list
@@ -52,7 +58,7 @@ class SendGoToMessage(TypedDict):
 class PointOfInterest(IProtocol):
     
     threat_count = 0
-    MAX_THREATS = 3
+    MAX_THREATS = 1
     
     is_threat: int
     threat_level: int
@@ -141,7 +147,7 @@ class Drone(IProtocol):
         
         ## Initial state
         self.status = DroneStatus.MAPPING           
-        
+        self.drones_in_formation = []
 
         self._log.info(f"Drone {self.provider.get_id()} uncertainty rate {self.UNCERTAINTY_RATE}, vanishing time {self.VANISHING_UPDATE_TIME}, map threshold {self.MAP_THRESHOLD}")
 
@@ -161,7 +167,7 @@ class Drone(IProtocol):
         self.provider.send_mobility_command(command)
         
         ## First callbacks
-        self.provider.schedule_timer("mobility",self.provider.current_time() + 5)
+        self.provider.schedule_timer("mapping_mobility",self.provider.current_time() + 5)
         self.provider.schedule_timer("camera",self.provider.current_time() + 1)
         self.provider.schedule_timer("heartbeat",self.provider.current_time() + 1)
         self.vanishing_map_routine()
@@ -185,6 +191,13 @@ class Drone(IProtocol):
 
                 is_threat = node['is_threat']
                 if is_threat:
+                    ### First update the drone status if it is mapping
+                    if self.status == DroneStatus.MAPPING:
+                        self.status = DroneStatus.RECRUITING
+                        
+                        self.provider.schedule_timer("recruiting_mobility", self.provider.current_time())
+
+                    ### Then register the threat
                     if node['type'] in [threat.position_id for threat in self.threats_found]:
                         # Just update timestamp
                         for threat in self.threats_found:
@@ -196,7 +209,6 @@ class Drone(IProtocol):
                         self.threats_found.append(threat)
                         
                     self._log.info(f"Threats found {self.threats_found}")
-
                 
                                 
                 # Checking the total uncertainty
@@ -325,13 +337,21 @@ class Drone(IProtocol):
         return send_command        
 
     
-    def send_heartbeat(self):
-        #self._log.info(f"Sending heartbeat ...")
-        message: HeartBeatMessage = {
-            'message_type': MessageType.HEARTBEAT_MESSAGE.value,
-            'status': self.status.value,
+    def send_mapping_heartbeat(self):
+        message: MappingHeartBeatMessage = {
+            'message_type': MessageType.MAPPING_HEARTBEAT_MESSAGE.value,
             'sender': self.provider.get_id()
         }
+        command = BroadcastMessageCommand(json.dumps(message))
+        self.provider.send_communication_command(command)
+
+    def send_recuiting_heartbeat(self):
+        message: RecruitingHeartBeatMessage = {
+            'message_type': MessageType.RECRUITING_HEATBEAT_MESSAGE.value,
+            'sender': self.provider.get_id(),
+            'sender_position': np.array(self.drone_position).tolist(), 
+        }
+        self._log.info(f"Sending recruting position {message['sender_position']}")
         command = BroadcastMessageCommand(json.dumps(message))
         self.provider.send_communication_command(command)
 
@@ -356,19 +376,38 @@ class Drone(IProtocol):
         rows, cols = np.where(self.map[:, :, 0] == max_knowledge)
         return list(zip(rows, cols))
 
-    def received_heartbeat(self, data: dict):
-        heartbeat_msg: HeartBeatMessage = data
+    def mapping_received_heartbeat(self, data: dict):
+        heartbeat_msg: MappingHeartBeatMessage = data
         #self._log.info(f"Received heartbeat from {heartbeat_msg['sender']}")
+        message: ShareMapMessage = {
+            'message_type': MessageType.SHARE_MAP_MESSAGE.value,
+            'map': self.map.tolist(),
+            'sender': self.provider.get_id()
+        }
+        destination_id = heartbeat_msg['sender']                
+        command = SendMessageCommand(json.dumps(message), destination_id)
+        self.provider.send_communication_command(command)
 
-        if heartbeat_msg['status'] == DroneStatus.MAPPING.value and self.status == DroneStatus.MAPPING:
-            message: ShareMapMessage = {
-                'message_type': MessageType.SHARE_MAP_MESSAGE.value,
-                'map': self.map.tolist(),
-                'sender': self.provider.get_id()
-                }
-            destination_id = heartbeat_msg['sender']                
-            command = SendMessageCommand(json.dumps(message), destination_id)
-            self.provider.send_communication_command(command)
+    def received_recruting_while_mapping(self, data: dict):
+        self.status = DroneStatus.CREATING_FORMATION
+        self._log.info(f"Drone {self.provider.get_id()} changing status to CREATING_FORMATION due to heartbeat from drone {data['sender']}")
+        
+        heartbeat_msg: RecruitingHeartBeatMessage = data
+        self.goto_command = heartbeat_msg['sender_position']
+        command = GotoCoordsMobilityCommand(*self.goto_command)
+        self.provider.send_mobility_command(command)
+
+        self.provider.schedule_timer(
+                    "formation_mobility",
+                    self.provider.current_time() + 1)
+
+
+    def received_mapping_while_recruiting(self, data:dict):
+        #self.status = DroneStatus.CREATING_FORMATION
+        self.goto_command = self.drone_position
+        command = GotoCoordsMobilityCommand(*self.goto_command)
+        self.provider.send_mobility_command(command)
+        #pass
 
 
     def updated_map(self, data: dict):
@@ -385,20 +424,48 @@ class Drone(IProtocol):
             self.camera_routine()
             self.provider.schedule_timer("camera", self.provider.current_time() + 0.5)
         
-        if timer == "mobility": 
+        if timer == "mapping_mobility": 
             if self.drone_position is not None:
                 current_pos_array = np.array(self.drone_position)    
             
-            if np.linalg.norm(current_pos_array - self.goto_command) < 1:
-                self.internal_mobility_command()
+            if self.status == DroneStatus.MAPPING:
+                if np.linalg.norm(current_pos_array - self.goto_command) < 1:
+                    self.internal_mobility_command()
 
-            self.provider.schedule_timer(
-                "mobility",
-                self.provider.current_time() + 5
-            )
+                self.provider.schedule_timer(
+                    "mapping_mobility",
+                    self.provider.current_time() + 5)
+                
+        if timer == "recruiting_mobility": 
+            if self.drone_position is not None:
+                current_pos_array = np.array(self.drone_position) 
+            
+            if self.status == DroneStatus.RECRUITING:
+                if np.linalg.norm(current_pos_array - self.goto_command) < 1:
+                    self.internal_mobility_command()
+
+                self.provider.schedule_timer(
+                    "recruiting_mobility",
+                    self.provider.current_time() + 5)
+        
+        if timer == "formation_mobility":
+            if self.drone_position is not None:
+                current_pos_array = np.array(self.drone_position)
+            
+            if self.status == DroneStatus.CREATING_FORMATION:
+                if np.linalg.norm(current_pos_array - self.goto_command) < 1:
+                    pass
+                self.provider.schedule_timer(
+                    "formation_mobility",
+                    self.provider.current_time() + 1)
 
         if timer == "heartbeat":
-            self.send_heartbeat()
+            if self.status == DroneStatus.MAPPING: 
+                self.send_mapping_heartbeat()
+            
+            if self.status == DroneStatus.RECRUITING:
+                self.send_recuiting_heartbeat()
+
             self.provider.schedule_timer("heartbeat", self.provider.current_time() + 1)
 
         if timer == "vanishing_map":
@@ -415,8 +482,17 @@ class Drone(IProtocol):
         
         msg_type = data['message_type']
 
-        if msg_type == MessageType.HEARTBEAT_MESSAGE.value:
-            self.received_heartbeat(data)
+        if msg_type == MessageType.MAPPING_HEARTBEAT_MESSAGE.value:            
+            if self.status == DroneStatus.MAPPING:
+                self.mapping_received_heartbeat(data)
+
+            elif self.status == DroneStatus.RECRUITING:                
+                self.received_mapping_while_recruiting(data)
+
+        elif msg_type == MessageType.RECRUITING_HEATBEAT_MESSAGE.value:
+            if self.status == DroneStatus.MAPPING:
+                self.received_recruting_while_mapping(data)
+        
 
         elif msg_type == MessageType.SHARE_MAP_MESSAGE.value:
             self.map = self.updated_map(data)
