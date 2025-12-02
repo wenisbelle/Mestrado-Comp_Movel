@@ -12,7 +12,7 @@ from gradysim.simulator.handler.communication import CommunicationHandler, Commu
 def run_simulation_once():
     # Configuring simulation
     config = SimulationConfiguration(
-        duration=250, 
+        duration=500, 
         real_time=False,
     )
     builder = SimulationBuilder(config)
@@ -51,7 +51,7 @@ def run_simulation_once():
     builder.add_node(ConfiguredDrone, (0, 0, 0))
 
 
-
+    PointOfInterest.threat_count = 0
     # Instantiating ground sensors to represent the map
     for i in range(10):
         for j in range(10):

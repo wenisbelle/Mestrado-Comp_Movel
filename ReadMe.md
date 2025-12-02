@@ -2,11 +2,16 @@
 
 Surveillance: Implementa o modelo que dá o valor de 1 quando a camera passa e vai diminuindo o valor da confiança
 
+
 Surveillance_v2: Implementa o valor incremental de incerteza, sendo 0 quando a camera passa e esse valor cresce linearmente com o tempo.
 
-Surveillance_v3: Teste para poder passar os valores via a script de execution.py
+
+Surveillance_v3: Modelo que implementa o algoritmo com o cluster fitness. É o sistema base para o artigo: "Collective Terrain Surveillance through
+Occasional Data Exchange within a Swarm of UAVs"
+
 
 Surveillance_recruting: Teste do sistema para efetivamente recrutar os outros UAVs. Nesse modelo, a câmera foi modificada para uma customCamera.py, capaz de pegar outros dados do nó. 
+
 
 # TODO:
 

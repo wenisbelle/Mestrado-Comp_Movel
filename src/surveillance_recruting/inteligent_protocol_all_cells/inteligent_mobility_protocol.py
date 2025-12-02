@@ -153,7 +153,7 @@ class Drone(IProtocol):
                                 
                 # Checking the total uncertainty
                 self.total_uncertainty = self.map[:,:,0].sum()
-                self._log.info(f"At time: {self.provider.current_time()}, node {self.provider.get_id()} map has total uncertainty of {self.total_uncertainty}")         
+                #self._log.info(f"At time: {self.provider.current_time()}, node {self.provider.get_id()} map has total uncertainty of {self.total_uncertainty}")         
 
         if self.visualizer:
             self.visualizer.update_map(self.provider.get_id(), self.map[:,:,0])

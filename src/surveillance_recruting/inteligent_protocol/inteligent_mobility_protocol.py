@@ -8,6 +8,7 @@ import random
 from .visualization import MapVisualizer
 from .cluster import ClusterDetector
 from .customCamera import CustomCamera
+from dataclasses import asdict
 
 from gradysim.protocol.interface import IProtocol
 from gradysim.protocol.messages.telemetry import Telemetry
@@ -35,6 +36,10 @@ class MessageType(enum.Enum):
     SHARE_MAP_MESSAGE = 1
     SHARE_GOTO_POSITION_MESSAGE = 2
     RECRUITING_HEATBEAT_MESSAGE = 3
+    CREATE_FORMATION_MESSAGE = 4
+    ARRIVED_AT_FORMATION_MESSAGE = 5
+    ENGAGEMENT_COMPLETED_MESSAGE = 6
+    LIST_OF_THREATS_MESSAGE = 7
 
 class MappingHeartBeatMessage(TypedDict):
     message_type: int
@@ -44,6 +49,16 @@ class RecruitingHeartBeatMessage(TypedDict):
     message_type: int
     sender: int
     sender_position: list
+
+class CreateFormationMessage(TypedDict):
+    message_type: int
+    sender: int
+    sender_position: list
+
+class ArrivedAtFormationMessage(TypedDict):
+    message_type: int
+    sender: int
+    has_drone_arrived: bool
     
 class ShareMapMessage(TypedDict):
     message_type: int 
@@ -55,10 +70,20 @@ class SendGoToMessage(TypedDict):
     goto: list
     sender: int
 
+class SendEngagementCompletedMessage(TypedDict):
+    message_type: int
+    sender: int
+    point_of_interest_id: int
+
+class SendListOfThreatsMessage(TypedDict):
+    message_type: int
+    sender: int
+    threats: list
+
 class PointOfInterest(IProtocol):
     
     threat_count = 0
-    MAX_THREATS = 1
+    MAX_THREATS = 10
     
     is_threat: int
     threat_level: int
@@ -73,9 +98,11 @@ class PointOfInterest(IProtocol):
         self.green = [0.0, 255.0, 0.0]
         self.red = [255.0, 0.0, 0.0]
        
-        print(f"Point of Interest {self.provider.get_id()} initialized as safe.")
-        self.provider.schedule_timer("inital_paint",self.provider.current_time() + 1)
-        self.provider.schedule_timer("check_threats",self.provider.current_time() + 10)
+        self._log.info(f"Point of Interest {self.provider.get_id()} initialized as safe.")
+        self.provider.schedule_timer("inital_paint",self.provider.current_time() + 2)
+
+        jitter = random.uniform(0, 100)
+        self.provider.schedule_timer("check_threats", self.provider.current_time() + jitter)
 
     def handle_timer(self, timer: str) -> None:
         if timer == "inital_paint":
@@ -85,19 +112,37 @@ class PointOfInterest(IProtocol):
             if self.is_threat == 1:
                 pass
             elif self.is_threat == 0 and PointOfInterest.threat_count < PointOfInterest.MAX_THREATS:
-                if random.random() < 0.05: 
+                if random.uniform(0,1) < 0.05: 
                     self.is_threat = 1
                     PointOfInterest.threat_count += 1
-                    print(f"Point of Interest {self.provider.get_id()} has become a THREAT!")
+                    self._log.info(f"Point of Interest {self.provider.get_id()} has become a THREAT!")
                     self.visualization.paint_node(self.provider.get_id(), self.red)
 
                     self.threat_level = random.randint(1, 3)
                     self._log.info(f"Point of Interest {self.provider.get_id()} threat level set to {self.threat_level}")
             
+            self.provider.schedule_timer("check_threats",self.provider.current_time() + 10)
+            
 
     def handle_packet(self, message: str) -> None:
-        pass
+        data: dict = json.loads(message)
 
+        if 'message_type' not in data:
+           self._log.warning(f"Received message without a message_type: {data}")
+           return
+        
+        msg_type = data['message_type']
+
+        if msg_type == MessageType.ENGAGEMENT_COMPLETED_MESSAGE.value:            
+            self._log.info(f"Point of Interest {self.provider.get_id()} is not a threat anymore.")
+            self.is_threat = 0
+            self.visualization.paint_node(self.provider.get_id(), self.green)
+            PointOfInterest.threat_count -= 1
+
+            self.provider.schedule_timer("check_threats",self.provider.current_time() + 10)
+
+   
+    
     def handle_telemetry(self, telemetry: Telemetry) -> None:
         pass
 
@@ -144,12 +189,16 @@ class Drone(IProtocol):
 
         ## Threats found
         self.threats_found = []
+        self.threat_arrival_time = None
+        self.SCALE_TO_THREAT_LEVEL = 10
         
         ## Initial state
         self.status = DroneStatus.MAPPING           
         self.drones_in_formation = []
+        self.drones_creating_formation = []
+        self.drone_leader_id = None
 
-        self._log.info(f"Drone {self.provider.get_id()} uncertainty rate {self.UNCERTAINTY_RATE}, vanishing time {self.VANISHING_UPDATE_TIME}, map threshold {self.MAP_THRESHOLD}")
+        #self._log.info(f"Drone {self.provider.get_id()} uncertainty rate {self.UNCERTAINTY_RATE}, vanishing time {self.VANISHING_UPDATE_TIME}, map threshold {self.MAP_THRESHOLD}")
 
         ## Visualization and cluster plugins
         self.cluster_detector = ClusterDetector(threshold=self.MAP_THRESHOLD, min_size=1, map_width=self.MAP_WIDTH, map_height=self.MAP_HEIGHT)
@@ -160,14 +209,13 @@ class Drone(IProtocol):
         #    # I have to think a better way to do this.
         #    Drone.visualizer = MapVisualizer(num_drones=self.NUMBER_OF_DRONES, map_size=self.MAP_WIDTH * self.MAP_HEIGHT, threshold=self.MAP_THRESHOLD)
 
-        #self.visualizer.update_map(self.provider.get_id(), self.map[:,:,0])
 
         self.goto_command = np.array([random.uniform(-5*self.MAP_WIDTH, 5*self.MAP_WIDTH), random.uniform(-5*self.MAP_HEIGHT, 5*self.MAP_HEIGHT), 10])
         command = GotoCoordsMobilityCommand(*self.goto_command)
         self.provider.send_mobility_command(command)
         
         ## First callbacks
-        self.provider.schedule_timer("mapping_mobility",self.provider.current_time() + 5)
+        self.provider.schedule_timer("mapping_mobility",self.provider.current_time() + 1)
         self.provider.schedule_timer("camera",self.provider.current_time() + 1)
         self.provider.schedule_timer("heartbeat",self.provider.current_time() + 1)
         self.vanishing_map_routine()
@@ -189,13 +237,17 @@ class Drone(IProtocol):
                 self.map[row, col, 0] = 0.0 
                 self.map[row, col, 1] = self.provider.current_time()
 
+                #### Check if there are threats
                 is_threat = node['is_threat']
                 if is_threat:
                     ### First update the drone status if it is mapping
                     if self.status == DroneStatus.MAPPING:
                         self.status = DroneStatus.RECRUITING
                         
+                        ### Starting this new logic mobility timer
                         self.provider.schedule_timer("recruiting_mobility", self.provider.current_time())
+
+                        self._log.info(f"Drone {self.provider.get_id()} changing status to RECRUITING due to threat found at position id {node['type']}")
 
                     ### Then register the threat
                     if node['type'] in [threat.position_id for threat in self.threats_found]:
@@ -207,6 +259,7 @@ class Drone(IProtocol):
                         threat_level = node['threat_level']
                         threat = Threat(level=threat_level, position_id=node['type'], timestamp=self.provider.current_time())
                         self.threats_found.append(threat)
+                        ### Adding the flated index of the threat to the list of found threats 
                         
                     self._log.info(f"Threats found {self.threats_found}")
                 
@@ -351,7 +404,7 @@ class Drone(IProtocol):
             'sender': self.provider.get_id(),
             'sender_position': np.array(self.drone_position).tolist(), 
         }
-        self._log.info(f"Sending recruting position {message['sender_position']}")
+        #self._log.info(f"Sending recruiting position {message['sender_position']}")
         command = BroadcastMessageCommand(json.dumps(message))
         self.provider.send_communication_command(command)
 
@@ -388,26 +441,115 @@ class Drone(IProtocol):
         command = SendMessageCommand(json.dumps(message), destination_id)
         self.provider.send_communication_command(command)
 
-    def received_recruting_while_mapping(self, data: dict):
+    def sending_create_formation_message(self, destination_id: int):
+        ### send to the other drone the formation message
+        ### In this case it does not need to send the is_drone_arrived as True
+        message: CreateFormationMessage = {
+            'message_type': MessageType.CREATE_FORMATION_MESSAGE.value,
+            'sender': self.provider.get_id(),
+            'sender_position': np.array(self.drone_position).tolist()
+        }
+        destination_id = destination_id
+        command = SendMessageCommand(json.dumps(message), destination_id)
+        self.provider.send_communication_command(command)
+
+    def received_recruiting_while_mapping(self, data: dict):
+        ### In the future we can decide strategies and negotiations here
+        ## Changing status to creating formation
         self.status = DroneStatus.CREATING_FORMATION
         self._log.info(f"Drone {self.provider.get_id()} changing status to CREATING_FORMATION due to heartbeat from drone {data['sender']}")
         
+        #### Once it is going to the position, send one last mapping heartbeat to inform the other drone
+        self.send_mapping_heartbeat()
+
+        #### Assign the leader drone
+        self.drone_leader_id = data['sender']
+        
+        ### Go to the position sent by the other drone
         heartbeat_msg: RecruitingHeartBeatMessage = data
         self.goto_command = heartbeat_msg['sender_position']
         command = GotoCoordsMobilityCommand(*self.goto_command)
         self.provider.send_mobility_command(command)
 
         self.provider.schedule_timer(
-                    "formation_mobility",
+                    "going_to_formation",
                     self.provider.current_time() + 1)
+        
+    def send_list_of_threats(self, destination_id: int):
+        threats_list_as_dicts = [asdict(t) for t in self.threats_found]
+
+        message: SendListOfThreatsMessage = {
+            'message_type': MessageType.LIST_OF_THREATS_MESSAGE.value,
+            'sender': self.provider.get_id(),
+            'threats': threats_list_as_dicts
+            }
+        command = SendMessageCommand(json.dumps(message), destination_id)
+        self.provider.send_communication_command(command)
+
+        
+    def received_recruiting_while_recruiting(self, data:dict):
+        self._log.info(f"Drone {self.provider.get_id()} received recruiting heartbeat from drone {data['sender']} while RECRUITING.")
+        #################################################################################################
+        #################################################################################################
+        #### TO DO: get the threats found by the other drone and merge them.
+        #################################################################################################
+        #################################################################################################
+        if self.provider.get_id() > data['sender']:
+            ## The drone with the highest id becames the leader.
+            self.received_mapping_while_recruiting(data)
+            self._log.info(f"Drone {self.provider.get_id()} becoming leader over drone {data['sender']}")
+        else:
+            self.received_recruiting_while_mapping(data)
+            self._log.info(f"Drone {self.provider.get_id()} becoming follower under drone {data['sender']}")
+
+            #### Send the list of threats found to the leader drone
+            self.send_list_of_threats(data['sender'])
+             
+
 
 
     def received_mapping_while_recruiting(self, data:dict):
-        #self.status = DroneStatus.CREATING_FORMATION
+        ## Changing status to creating formation
+        self.status = DroneStatus.CREATING_FORMATION
+        self._log.info(f"Drone {self.provider.get_id()} changing status to CREATING_FORMATION due to message from drone {data['sender']}")
+
+        ### Send one last recruiting heartbeat to inform the other drone
+        self.send_recuiting_heartbeat()
+
+        ### Stay at position
+        ## Once this status has no timer with mobility command the drone will stay at position
         self.goto_command = self.drone_position
         command = GotoCoordsMobilityCommand(*self.goto_command)
         self.provider.send_mobility_command(command)
-        #pass
+
+        ## Send the creating formation to the other drone
+        self.drones_creating_formation.append(data['sender'])
+        self.sending_create_formation_message(data['sender'])
+        self._log.info(f"Drone {self.provider.get_id()} sending create formation message to drone {data['sender']}")
+        ## Schedule a timer to do it reapetedly in case the message is lost, until the other drone confirms arrival
+        self.provider.schedule_timer("command_create_formation", self.provider.current_time() + 1.0)
+
+    def send_message_to_point_of_interest(self, point_of_interest_id: int):
+        message: SendEngagementCompletedMessage = {
+            'message_type': MessageType.ENGAGEMENT_COMPLETED_MESSAGE.value,
+            'sender': self.provider.get_id(),
+            'point_of_interest_id': point_of_interest_id
+        }
+        command = SendMessageCommand(json.dumps(message), point_of_interest_id)
+        self.provider.send_communication_command(command)
+        self._log.info(f"Drone {self.provider.get_id()} sent engagement completed message to point of interest {point_of_interest_id}")
+
+    def send_formation_back_to_mapping(self):
+        for drone_id in self.drones_in_formation:
+            message: SendEngagementCompletedMessage = {
+                'message_type': MessageType.ENGAGEMENT_COMPLETED_MESSAGE.value,
+                'sender': self.provider.get_id(),
+                'point_of_interest_id': drone_id
+            }
+            command = SendMessageCommand(json.dumps(message), drone_id)
+            self.provider.send_communication_command(command)
+            self._log.info(f"Drone {self.provider.get_id()} sent engagement completed message to drone {drone_id} to change back to MAPPING status")
+        
 
 
     def updated_map(self, data: dict):
@@ -432,39 +574,175 @@ class Drone(IProtocol):
                 if np.linalg.norm(current_pos_array - self.goto_command) < 1:
                     self.internal_mobility_command()
 
+                self._log.info(f"Drone {self.provider.get_id()} mapping mobility timer executed.")
+
                 self.provider.schedule_timer(
                     "mapping_mobility",
-                    self.provider.current_time() + 5)
+                    self.provider.current_time() + 1)
                 
         if timer == "recruiting_mobility": 
             if self.drone_position is not None:
                 current_pos_array = np.array(self.drone_position) 
             
+            ### Maybe in the future we can add another strategy for recruiting
             if self.status == DroneStatus.RECRUITING:
                 if np.linalg.norm(current_pos_array - self.goto_command) < 1:
                     self.internal_mobility_command()
 
+                self._log.info(f"Drone {self.provider.get_id()} recruiting mobility timer executed.")
+
                 self.provider.schedule_timer(
                     "recruiting_mobility",
-                    self.provider.current_time() + 5)
-        
-        if timer == "formation_mobility":
-            if self.drone_position is not None:
-                current_pos_array = np.array(self.drone_position)
-            
-            if self.status == DroneStatus.CREATING_FORMATION:
-                if np.linalg.norm(current_pos_array - self.goto_command) < 1:
-                    pass
-                self.provider.schedule_timer(
-                    "formation_mobility",
                     self.provider.current_time() + 1)
+                
+        if timer == "command_create_formation":
+            if self.status == DroneStatus.CREATING_FORMATION:
+                ## Send the creating formation to all other drones that are creating formation with this drone
+                for drone_id in self.drones_creating_formation:
+                    self.sending_create_formation_message(drone_id)
+                    self._log.info(f"Drone {self.provider.get_id()} sending create formation message to drone {drone_id}") 
+
+                self._log.info(f"Drone {self.provider.get_id()} resending create formation messages to drones {self.drones_creating_formation}")               
+                ## Schedule a timer to do it reapetedly in case the message is lost, until the other drone confirms arrival
+                self.provider.schedule_timer("command_create_formation", self.provider.current_time() + 1.0)
+
+        if timer == "going_to_formation":
+            if self.status == DroneStatus.CREATING_FORMATION:
+                self._log.info(f"Drone {self.provider.get_id()} going to formation timer executed. Current position {self.drone_position}, going to {self.goto_command}")
+                ### If the drone has arrived, it changes its status to RECRUITED and starts:
+                ### timer to just follow the leader position
+                ### send message to confirm arrival
+                current_pos_arr = np.array(self.drone_position)
+                goto_cmd_arr = np.array(self.goto_command)
+                
+                if np.linalg.norm(current_pos_arr - goto_cmd_arr) < 1:
+                    self.status = DroneStatus.RECRUITED
+                    self._log.info(f"Drone {self.provider.get_id()} changing status to RECRUITED as it has arrived at formation point.")
+
+                    ### Send arrival message
+                    message: ArrivedAtFormationMessage = {
+                        'message_type': MessageType.ARRIVED_AT_FORMATION_MESSAGE.value,
+                        'sender': self.provider.get_id(),
+                        'has_drone_arrived': True
+                    }
+                    destination_id = self.drone_leader_id
+                    command = SendMessageCommand(json.dumps(message), destination_id)
+                    self.provider.send_communication_command(command)                                
+
+                    ### Start this timer
+                    self.provider.schedule_timer(
+                        "follow_leader_mobility",
+                        self.provider.current_time() + 1.0)  
+                
+                else:
+                    ### Just keep waiting to arrive
+                    self.provider.schedule_timer(
+                        "going_to_formation",
+                        self.provider.current_time() + 1.0)
+
+        if timer == "follow_leader_mobility":
+            if self.status == DroneStatus.RECRUITED:
+                ## Just follow the leader position
+                self._log.info(f"Drone {self.provider.get_id()} is following leader drone {self.drone_leader_id} to position {self.goto_command}")
+
+                self.provider.schedule_timer(
+                    "follow_leader_mobility",
+                    self.provider.current_time() + 1.0)
+                
+            if self.status == DroneStatus.ENGAGING or self.status == DroneStatus.RECRUITING:
+                ## This is the leader. Send the position to the other drones in formation
+                for drone_id in self.drones_in_formation:
+                    self.send_goto_command(np.array(self.drone_position), drone_id)
+                    self._log.info(f"Drone {self.provider.get_id()} is the leader, sending {self.drone_position} to drone {drone_id}")
+
+                self.provider.schedule_timer(
+                    "follow_leader_mobility",
+                    self.provider.current_time() + 1.0)
+                
+        if timer == "engaging_mobility":
+            if self.status == DroneStatus.ENGAGING:
+                ### Send to the threat position
+                
+                if not self.threats_found:
+                    self._log.info(f"There are no more threats. Changing status to MAPPING.")
+                    
+                    #### Change the status back to mapping
+                    self.status = DroneStatus.MAPPING
+
+                    #### Send message to all other drones in formation to change back to mapping
+                    self.send_formation_back_to_mapping()
+                    
+                    #### Reseting the threat arrival time
+                    self.threat_arrival_time = None
+
+                    ### Clean the drones in formation list
+                    self.drones_in_formation = []
+
+                    #### reset the drones creating formation list
+                    self.drones_creating_formation = []
+
+                    #### reset leader id
+                    self.drone_leader_id = None
+
+
+                    ### Get to Drone back to mapping activity
+                    self.provider.schedule_timer(
+                    "mapping_mobility",
+                    self.provider.current_time() + 1)
+
+                else:
+                    ### For now there is just one threat, but in the future we can 
+                    ### apply a better logic to choose which threat to engage first
+                    threat_position = self.threats_found[0].position_id - self.NUMBER_OF_DRONES
+                    map_center_offset = (self.MAP_WIDTH * 10) / 2
+                    target_row = threat_position // self.MAP_WIDTH
+                    target_col = threat_position % self.MAP_WIDTH
+
+                    x_goto = target_row * 10 - map_center_offset
+                    y_goto = target_col * 10 - map_center_offset            
+
+                    self.goto_command = np.array([x_goto, y_goto, 10])
+                    command = GotoCoordsMobilityCommand(*self.goto_command)
+                    self.provider.send_mobility_command(command)
+
+                    self._log.info(f"Drone {self.provider.get_id()} going to threat location, which is at cell {target_row}, {target_col}, coordinates {self.goto_command}")
+
+                    if np.linalg.norm(np.array(self.drone_position) - self.goto_command) < 1:
+                        
+                        if self.threat_arrival_time is None:
+                            self.threat_arrival_time = self.provider.current_time()
+                            self._log.info(f"Drone {self.provider.get_id()} has arrived at threat location. Starting engagement timer.")
+                        
+                        elif (self.provider.current_time() - self.threat_arrival_time) < self.SCALE_TO_THREAT_LEVEL * self.threats_found[0].level:
+                            time_remaining = 10 - (self.provider.current_time() - self.threat_arrival_time)
+                            self._log.info(f"Neutralizing threat... {time_remaining:.1f}s remaining.")
+
+                        else:
+                            self._log.info(f"MISSION ACCOMPLISHED!")
+                            self._log.info(f"Removing threat at position id {self.threats_found[0].position_id} from the list.")
+                            
+                            ### Change the point back to safe
+                            self.send_message_to_point_of_interest(self.threats_found[0].position_id)
+                            
+                            ### Remove the threat from the list
+                            self.threats_found.pop(0)
+
+                            ### Restart this timer to go to next threat or back to mapping
+                            self.threat_arrival_time = None
+
+
+                    self.provider.schedule_timer(
+                        "engaging_mobility",
+                        self.provider.current_time() + 5)
 
         if timer == "heartbeat":
             if self.status == DroneStatus.MAPPING: 
                 self.send_mapping_heartbeat()
+                self._log.info(f"Drone {self.provider.get_id()} sent mapping heartbeat.")
             
             if self.status == DroneStatus.RECRUITING:
                 self.send_recuiting_heartbeat()
+                self._log.info(f"Drone {self.provider.get_id()} sent recruiting heartbeat.")
 
             self.provider.schedule_timer("heartbeat", self.provider.current_time() + 1)
 
@@ -491,7 +769,10 @@ class Drone(IProtocol):
 
         elif msg_type == MessageType.RECRUITING_HEATBEAT_MESSAGE.value:
             if self.status == DroneStatus.MAPPING:
-                self.received_recruting_while_mapping(data)
+                self.received_recruiting_while_mapping(data)
+
+            if self.status == DroneStatus.RECRUITING:
+                self.received_recruiting_while_recruiting(data)
         
 
         elif msg_type == MessageType.SHARE_MAP_MESSAGE.value:
@@ -514,7 +795,89 @@ class Drone(IProtocol):
             #self._log.info(f"Received goto command from {goto_msg['sender']}. Going to {goto_msg['goto']}")
             self.goto_command = goto_msg['goto']
             command = GotoCoordsMobilityCommand(*self.goto_command)      
-            self.provider.send_mobility_command(command)       
+            self.provider.send_mobility_command(command)
+
+
+        elif msg_type == MessageType.CREATE_FORMATION_MESSAGE.value:
+            formation_msg: CreateFormationMessage = data
+            self._log.info(f"Drone {self.provider.get_id()} received create formation message from drone {formation_msg['sender']}. Going to position {formation_msg['sender_position']}    ")
+            ## Go to the formation position
+            self.goto_command = formation_msg['sender_position'] 
+            command = GotoCoordsMobilityCommand(*self.goto_command)
+            self.provider.send_mobility_command(command)
+
+            ### Define the sender drone as the new leader
+            if self.drone_leader_id == None:
+                self.drone_leader_id = formation_msg['sender']          
+                      
+        
+        elif msg_type == MessageType.ARRIVED_AT_FORMATION_MESSAGE.value:
+            arrived_msg: ArrivedAtFormationMessage = data
+            if arrived_msg['has_drone_arrived']:
+                ### Change the variable drones_creating_formation to exclude this drone
+                if arrived_msg['sender'] in self.drones_creating_formation:
+                    self.drones_creating_formation.remove(arrived_msg['sender'])
+                else:
+                    self._log.warning(f"Drone {self.provider.get_id()} received arrival confirmation from drone {arrived_msg['sender']} but this drone was not in the creating formation list.")
+                
+                ### Update the variable drones_in_formation
+                self.drones_in_formation.append(arrived_msg['sender'])
+
+                ### This will depend on the trheats found and the number of drones in formation
+                self.status = DroneStatus.ENGAGING
+                self._log.info(f"Drone {self.provider.get_id()} changing status back to RECRUITING for now as the other drone has arrived at formation point.")
+                self.provider.schedule_timer("engaging_mobility", self.provider.current_time() + 1.0)
+
+                self.provider.schedule_timer(
+                    "follow_leader_mobility",
+                    self.provider.current_time() + 1.0)  
+        
+        elif msg_type == MessageType.ENGAGEMENT_COMPLETED_MESSAGE.value:
+            if self.status == DroneStatus.RECRUITED:
+                ### Let's check if the sender is the leader
+                if data['sender'] == self.drone_leader_id:
+                    ### Change status back to MAPPING
+                    self.status = DroneStatus.MAPPING
+                    self._log.info(f"Drone {self.provider.get_id()} changing status back to MAPPING")
+
+                    #### Empty the formation lists
+                    self.drones_in_formation = []
+                    self.drones_creating_formation = []
+
+                    ### Reset the threats found
+                    self.threats_found = []
+                    
+                    ### Reset leader id
+                    self.drone_leader_id = None
+
+                    ### Get back to mapping mobility
+                    self.provider.schedule_timer(
+                        "mapping_mobility",
+                        self.provider.current_time() + 1)
+        
+        elif msg_type == MessageType.LIST_OF_THREATS_MESSAGE.value:
+            received_threats_data = data['threats']
+
+            new_threats = []
+            for t_dict in received_threats_data:
+                # Recreate the Threat object from the dictionary
+                threat_obj = Threat(
+                    level=t_dict['level'], 
+                    position_id=t_dict['position_id'], 
+                    timestamp=t_dict['timestamp']
+                )
+                new_threats.append(threat_obj)
+
+            for original_threat in self.threats_found:
+                for threat in new_threats:
+                    if threat.position_id == original_threat.position_id:
+                        if threat.timestamp > original_threat.timestamp:
+                            self._log.info(f"Drone {self.provider.get_id()} updating threat at position id {threat.position_id} with level {threat.level} from drone {data['sender']}")
+                            original_threat.level = threat.level
+                            original_threat.timestamp = threat.timestamp
+                    else:
+                        self.threats_found.append(threat)
+                        self._log.info(f"Drone {self.provider.get_id()} added new threat from drone {data['sender']} at position id {threat.position_id} with level {threat.level}")    
         
         else:
             self._log.warning(f"Received message with unknown type: {msg_type}")
